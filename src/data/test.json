@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "pos": [1, 1, 1],
+      "size": [1, 1, 1],
+      "createdAt": "2025-10-03T07:11:33.352Z",
+      "updatedAt": "2025-10-03T07:11:33.352Z"
+    },
+    {
+      "pos": [2, 2, 2],
+      "size": [2, 2, 2],
+      "createdAt": "2025-10-03T07:11:33.352Z",
+      "updatedAt": "2025-10-03T07:11:33.352Z"
+    }
+  ],
+  "heatMap": [
+    "this should be a color gradient for all of the racks(which is in the data) based on their position they should be from red to green(yellow orange etc.)"
+  ]
+}
