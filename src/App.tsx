@@ -29,17 +29,17 @@ export default function App() {
     // Simulated backend response
     const fakeResponse = {
       data: Array.from({ length: 40 }).map(() => ({
-        pos: [Math.floor(Math.random() * 10 - 5), 0.5, Math.floor(Math.random() * 10 - 5)] as [
-          number,
-          number,
-          number
-        ],
+        pos: [
+          Math.floor(Math.random() * 15 - 5),
+          0.5,
+          Math.floor(Math.random() * 15 - 5),
+        ] as [number, number, number],
         size: [1, 1, 1] as [number, number, number],
       })),
       heatMap: [
-        { pos: [0, 0, 0] as [number, number, number], intensity: 30 },
-        { pos: [4, 0, 4] as [number, number, number], intensity: 0.8 },
-        { pos: [-3, 0, 2] as [number, number, number], intensity: 0.6 },
+        // { pos: [0, 0, 0] as [number, number, number], intensity: 16 },
+        { pos: [5, 0, 5] as [number, number, number], intensity: 28 },
+        { pos: [-3, 0, 0] as [number, number, number], intensity: 12 },
       ],
     };
 
@@ -51,24 +51,25 @@ export default function App() {
 
   const racksWithHeat: RackWithHeat[] = useMemo(() => {
     if (racks.length === 0 || heatSources.length === 0) return [];
-
     const withHeat = racks.map((rack) => {
-      const totalHeat = heatSources.reduce((acc, src) => {
-        const d = distance(rack.pos, src.pos);
-        return acc + src.intensity / (1 + d * d);
-      }, 0);
+      const totalHeat =
+        heatSources.reduce((acc, src) => {
+          const d = distance(rack.pos, src.pos);
+          const radius = Math.max(1, Math.sqrt(src.intensity));
+          const falloff =
+            src.intensity * Math.exp(-(d * d) / (2 * radius * radius * 2));
+          return acc + falloff;
+        }, 0) * 3; // amplify for visualization
       return { ...rack, heat: totalHeat };
     });
 
     const maxHeat = Math.max(...withHeat.map((r) => r.heat));
-    const minHeat = Math.min(...withHeat.map((r) => r.heat));
     return withHeat.map((r) => ({
       ...r,
-      normalizedHeat: (r.heat - minHeat) / (maxHeat - minHeat || 1),
+      normalizedHeat: r.heat / (maxHeat || 1), // linear
     }));
   }, [racks, heatSources]);
 
-  // Track mouse for tooltip
   const handleMouseMove = (e: React.MouseEvent) => {
     setMousePos({ x: e.clientX, y: e.clientY });
   };
@@ -81,27 +82,35 @@ export default function App() {
       <Canvas camera={{ position: [10, 10, 15], fov: 60 }}>
         <Suspense fallback={null}>
           <ambientLight intensity={0.5} />
-          <directionalLight position={[10, 15, 10]} intensity={1.2} />
-          <OrbitControls />
-          <Environment preset="warehouse" />
+          <OrbitControls enablePan={false} maxDistance={35} minDistance={10} rotateSpeed={0.45} dampingFactor={0.4} />
+          <Environment preset="forest" />
 
           {/* Floor */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
             <planeGeometry args={[50, 50]} />
-            <meshStandardMaterial color="#111" />
+            <meshStandardMaterial color="#111" side={2} />
           </mesh>
 
-          {/* Heat sources */}
-          {heatSources.map((src, i) => (
-            <mesh key={`heat-${i}`} position={src.pos}>
-              <sphereGeometry args={[0.2, 16, 16]} />
-              <meshStandardMaterial
-                emissive="red"
-                emissiveIntensity={src.intensity * 2}
-                color="red"
-              />
-            </mesh>
-          ))}
+          {/* Heat sources visualization */}
+          {heatSources.map((src, i) => {
+            const radius = Math.max(2, Math.sqrt(src.intensity)); // visualize spread
+            return (
+              <mesh key={i} position={src.pos}>
+                <sphereGeometry
+                  args={[
+                    radius,
+                    32,
+                    128,
+                    0,
+                    Math.PI * 2,
+                    Math.PI * 2,
+                    Math.PI / 2,
+                  ]}
+                />
+                <meshBasicMaterial color="red" opacity={0.1} transparent />
+              </mesh>
+            );
+          })}
 
           {/* Racks */}
           {racksWithHeat.map((rack, i) => (
