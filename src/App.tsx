@@ -1,7 +1,6 @@
 import { Canvas } from "@react-three/fiber";
-import type { ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, Environment } from "@react-three/drei";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 interface RackData {
@@ -22,8 +21,9 @@ interface RackWithHeat extends RackData {
 export default function App() {
   const [racks, setRacks] = useState<RackData[]>([]);
   const [heatSources, setHeatSources] = useState<HeatSource[]>([]);
-  const [hoveredRack, setHoveredRack] = useState<RackWithHeat | null>(null);
+  const [activeRack, setActiveRack] = useState<RackWithHeat | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Simulated backend response
@@ -82,8 +82,14 @@ export default function App() {
       <Canvas camera={{ position: [10, 10, 15], fov: 60 }}>
         <Suspense fallback={null}>
           <ambientLight intensity={0.5} />
-          <OrbitControls enablePan={false} maxDistance={35} minDistance={10} rotateSpeed={0.45} dampingFactor={0.4} />
-          <Environment preset="forest" />
+          <OrbitControls
+            enablePan={false}
+            maxDistance={35}
+            minDistance={10}
+            rotateSpeed={0.45}
+            dampingFactor={0.4}
+          />
+          <Environment files={"/threeEnvs/forest_slope_1k.hdr"} />
 
           {/* Floor */}
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
@@ -117,26 +123,40 @@ export default function App() {
             <Rack
               key={i}
               {...rack}
-              onHover={(hover) => setHoveredRack(hover ? rack : null)}
+              onClick={() =>
+                setActiveRack((prev) => (prev === rack ? null : rack))
+              }
+              onMouseOut={() => setActiveRack(null)}
             />
           ))}
         </Suspense>
       </Canvas>
 
       {/* Tooltip */}
-      {hoveredRack && (
+      {activeRack && (
         <div
+          ref={tooltipRef}
           className="absolute bg-gray-800 text-white text-sm px-3 py-2 rounded-lg shadow-lg pointer-events-none"
           style={{
-            top: mousePos.y + 15,
-            left: mousePos.x + 15,
+            top: (() => {
+              const tooltipHeight = tooltipRef.current?.offsetHeight || 40; // fallback height
+              return Math.min(
+                mousePos.y + 15,
+                window.innerHeight - tooltipHeight - 10
+              );
+            })(),
+            left: (() => {
+              const tooltipWidth = tooltipRef.current?.offsetWidth || 150; // fallback width
+              return Math.min(
+                mousePos.x + 15,
+                window.innerWidth - tooltipWidth - 10
+              );
+            })(),
           }}
         >
           <div className="font-bold mb-1">Rack</div>
-          <div>
-            Pos: [{hoveredRack.pos.map((v) => v.toFixed(1)).join(", ")}]
-          </div>
-          <div>Heat: {hoveredRack.normalizedHeat.toFixed(2)}</div>
+          <div>Pos: [{activeRack.pos.map((v) => v.toFixed(1)).join(", ")}]</div>
+          <div>Heat: {activeRack.normalizedHeat.toFixed(2)}</div>
         </div>
       )}
 
@@ -154,26 +174,18 @@ export default function App() {
 }
 
 interface RackProps extends RackWithHeat {
-  onHover: (hover: boolean) => void;
+  onClick: (isOpen: boolean) => void;
+  onMouseOut: () => void;
 }
 
-function Rack({ pos, size, normalizedHeat, onHover }: RackProps) {
+function Rack({ pos, size, normalizedHeat, onClick, onMouseOut }: RackProps) {
   const color = getHeatColor(normalizedHeat);
-
-  const handlePointerOver = (e: ThreeEvent<PointerEvent>) => {
-    e.stopPropagation();
-    onHover(true);
-  };
-  const handlePointerOut = (e: ThreeEvent<PointerEvent>) => {
-    e.stopPropagation();
-    onHover(false);
-  };
 
   return (
     <mesh
       position={pos}
-      onPointerOver={handlePointerOver}
-      onPointerOut={handlePointerOut}
+      onClick={() => onClick(true)} // always tell parent to open this rack
+      onPointerOut={onMouseOut} // always tell parent to hide
     >
       <boxGeometry args={size} />
       <meshStandardMaterial color={color} />
