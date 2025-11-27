@@ -37,9 +37,9 @@ export default function App() {
         size: [1, 1, 1] as [number, number, number],
       })),
       heatMap: [
-        // { pos: [0, 0, 0] as [number, number, number], intensity: 16 },
         { pos: [5, 0, 5] as [number, number, number], intensity: 28 },
         { pos: [-3, 0, 0] as [number, number, number], intensity: 12 },
+        { pos: [-20, 0, 0] as [number, number, number], intensity: 42 },
       ],
     };
 
@@ -49,8 +49,9 @@ export default function App() {
     }, 500);
   }, []);
 
-  const racksWithHeat: RackWithHeat[] = useMemo(() => {
-    if (racks.length === 0 || heatSources.length === 0) return [];
+  const { racksWithHeat, maxHeat } = useMemo(() => {
+    if (racks.length === 0 || heatSources.length === 0)
+      return { racksWithHeat: [], maxHeat: 1 };
     const withHeat = racks.map((rack) => {
       const totalHeat =
         heatSources.reduce((acc, src) => {
@@ -63,12 +64,43 @@ export default function App() {
       return { ...rack, heat: totalHeat };
     });
 
-    const maxHeat = Math.max(...withHeat.map((r) => r.heat));
-    return withHeat.map((r) => ({
+    const maxHeat = Math.max(...withHeat.map((r) => r.heat)) || 1;
+    const racksWithHeat = withHeat.map((r) => ({
       ...r,
-      normalizedHeat: r.heat / (maxHeat || 1), // linear
+      normalizedHeat: r.heat / maxHeat, // linear
     }));
+    return { racksWithHeat, maxHeat };
   }, [racks, heatSources]);
+
+  const floorHeat = useMemo(() => {
+    const segments = 50;
+    const geometry = new THREE.PlaneGeometry(50, 50, segments, segments);
+    const positions = geometry.attributes.position.array as Float32Array;
+    const heatValues = new Float32Array((segments + 1) * (segments + 1));
+
+    for (let i = 0; i <= segments; i++) {
+      for (let j = 0; j <= segments; j++) {
+        const idx = i * (segments + 1) + j;
+        const x = positions[idx * 3];
+        const z = -positions[idx * 3 + 1]; // World z = -local y
+        const pos: [number, number, number] = [x, 0, z];
+
+        const totalHeat =
+          heatSources.reduce((acc, src) => {
+            const d = distance(pos, src.pos);
+            const radius = Math.max(1, Math.sqrt(src.intensity));
+            const falloff =
+              src.intensity * Math.exp(-(d * d) / (2 * radius * radius * 2));
+            return acc + falloff;
+          }, 0) * 3;
+
+        heatValues[idx] = totalHeat / maxHeat;
+      }
+    }
+
+    geometry.setAttribute("heat", new THREE.BufferAttribute(heatValues, 1));
+    return geometry;
+  }, [heatSources, maxHeat]);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     setMousePos({ x: e.clientX, y: e.clientY });
@@ -91,10 +123,41 @@ export default function App() {
           />
           <Environment files={"/threeEnvs/forest_slope_1k.hdr"} />
 
-          {/* Floor */}
+          {/* Floor with heat-based gradient */}
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
-            <planeGeometry args={[50, 50]} />
-            <meshStandardMaterial color="#111" side={2} />
+            <primitive object={floorHeat} attach="geometry" />
+            <shaderMaterial
+              vertexShader={`
+                varying vec2 vUv;
+                varying float vHeat;
+                attribute float heat;
+                void main() {
+                  vUv = uv;
+                  vHeat = heat;
+                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+              `}
+              fragmentShader={`
+                varying vec2 vUv;
+                varying float vHeat;
+
+                vec3 getHeatColor(float value) {
+                  if (value <= 0.25) {
+                    return mix(vec3(0.0, 0.69, 0.31), vec3(0.42, 0.98, 0.22), value / 0.25);
+                  } else if (value <= 0.5) {
+                    return mix(vec3(0.42, 0.98, 0.22), vec3(1.0, 1.0, 0.0), (value - 0.25) / 0.25);
+                  } else if (value <= 0.75) {
+                    return mix(vec3(1.0, 1.0, 0.0), vec3(0.98, 0.53, 0.03), (value - 0.5) / 0.25);
+                  } else {
+                    return mix(vec3(0.98, 0.53, 0.03), vec3(1.0, 0.0, 0.0), (value - 0.75) / 0.25);
+                  }
+                }
+
+                void main() {
+                  gl_FragColor = vec4(getHeatColor(vHeat), 1.0);
+                }
+              `}
+            />
           </mesh>
 
           {/* Heat sources visualization */}
@@ -163,7 +226,13 @@ export default function App() {
       {/* Legend */}
       <div className="absolute bottom-5 left-5 text-white">
         <div className="mb-1 text-sm font-semibold">Heat Legend</div>
-        <div className="w-40 h-4 bg-gradient-to-r from-green-500 via-yellow-400 to-red-500 rounded-full" />
+        <div
+          className="w-40 h-4 rounded-full"
+          style={{
+            background:
+              "linear-gradient(to right, #00B050 0%, #6BFA38 25%, #FFFF00 50%, #F98607 75%, #FF0000 100%)",
+          }}
+        />
         <div className="flex justify-between text-xs mt-1">
           <span>Cold</span>
           <span>Hot</span>
@@ -204,7 +273,25 @@ function distance(a: [number, number, number], b: [number, number, number]) {
 // Gradient: green → yellow → red
 function getHeatColor(value: number) {
   const color = new THREE.Color();
-  const hue = (1 - value) * 0.33; // 0.33=green, 0=red
-  color.setHSL(hue, 1, 0.5);
+  const normalizedValue = Math.max(0, Math.min(1, value)); // Ensure value is between 0 and 1
+
+  if (normalizedValue <= 0.25) {
+    // 0% to 25% (5°C to 15°C): #00B050 to #6BFA38
+    const t = normalizedValue / 0.25;
+    color.lerpColors(new THREE.Color(0x00b050), new THREE.Color(0x6bfa38), t);
+  } else if (normalizedValue <= 0.5) {
+    // 25% to 50% (15°C to 30°C): #6BFA38 to #FFFF00
+    const t = (normalizedValue - 0.25) / 0.25;
+    color.lerpColors(new THREE.Color(0x6bfa38), new THREE.Color(0xffff00), t);
+  } else if (normalizedValue <= 0.75) {
+    // 50% to 75% (30°C to 35°C): #FFFF00 to #F98607
+    const t = (normalizedValue - 0.5) / 0.25;
+    color.lerpColors(new THREE.Color(0xffff00), new THREE.Color(0xf98607), t);
+  } else {
+    // 75% to 100% (35°C to 40°C): #F98607 to #FF0000
+    const t = (normalizedValue - 0.75) / 0.25;
+    color.lerpColors(new THREE.Color(0xf98607), new THREE.Color(0xff0000), t);
+  }
+
   return color;
 }
